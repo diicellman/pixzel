@@ -1,5 +1,6 @@
 const std = @import("std");
 const zigimg = @import("zigimg");
+const color_palettes = @import("color_palettes.zig");
 const expect = std.testing.expect;
 
 const PixelArtOptions = struct {
@@ -7,12 +8,15 @@ const PixelArtOptions = struct {
     max_pixel_size: u32 = 8,
     min_image_size: u32 = 32,
     num_colors: u32 = 16,
+    palette: ?color_palettes.Palette = null,
 };
 
 const CliOptions = struct {
     input_path: []const u8,
     output_path: []const u8,
     pixel_size: u32,
+    palette_name: ?[]const u8,
+    custom_palette_path: ?[]const u8,
     help: bool,
 };
 
@@ -22,8 +26,12 @@ pub fn main() !void {
     const allocator = gpa.allocator();
 
     const cli_options = try parseCliArguments(allocator);
-    defer allocator.free(cli_options.input_path);
-    defer allocator.free(cli_options.output_path);
+    defer {
+        allocator.free(cli_options.input_path);
+        allocator.free(cli_options.output_path);
+        if (cli_options.palette_name) |name| allocator.free(name);
+        if (cli_options.custom_palette_path) |path| allocator.free(path);
+    }
 
     if (cli_options.help) {
         printUsage();
@@ -34,12 +42,32 @@ pub fn main() !void {
     var image = try zigimg.Image.fromFilePath(allocator, cli_options.input_path);
     defer image.deinit();
 
+    // Get the palette
+    var palette: ?color_palettes.Palette = null;
+    defer {
+        if (palette) |p| {
+            if (cli_options.custom_palette_path != null) {
+                allocator.free(p.colors);
+                allocator.free(p.name);
+            }
+        }
+    }
+
+    if (cli_options.custom_palette_path) |path| {
+        palette = try color_palettes.loadCustomPalette(allocator, path);
+        std.debug.print("Custom palette loaded successfully\n", .{});
+    } else if (cli_options.palette_name) |name| {
+        palette = try color_palettes.getPaletteByName(name);
+    }
+
     // Convert to pixel art
+    std.debug.print("Converting to pixel art\n", .{});
     var pixel_art = try convertToPixelArt(allocator, image, .{
-        .min_pixel_size = 4,
-        .max_pixel_size = 8,
+        .min_pixel_size = 6,
+        .max_pixel_size = 10,
         .min_image_size = cli_options.pixel_size,
-        .num_colors = 64,
+        .num_colors = if (palette) |p| @intCast(p.colors.len) else 64,
+        .palette = palette,
     });
     defer pixel_art.deinit();
 
@@ -61,6 +89,8 @@ fn parseCliArguments(allocator: std.mem.Allocator) !CliOptions {
         .output_path = try allocator.dupe(u8, "images/output.png"),
         .pixel_size = 32,
         .help = false,
+        .palette_name = null,
+        .custom_palette_path = null,
     };
 
     while (args.next()) |arg| {
@@ -86,6 +116,19 @@ fn parseCliArguments(allocator: std.mem.Allocator) !CliOptions {
             } else {
                 return error.MissingPixelSize;
             }
+        } else if (std.mem.eql(u8, arg, "-p") or std.mem.eql(u8, arg, "--palette")) {
+            if (args.next()) |palette_name| {
+                if (options.palette_name) |name| allocator.free(name);
+                options.palette_name = try allocator.dupe(u8, palette_name);
+            } else {
+                return error.MissingPaletteName;
+            }
+        } else if (std.mem.eql(u8, arg, "-c") or std.mem.eql(u8, arg, "--custom-palette")) {
+            if (args.next()) |custom_palette_path| {
+                options.custom_palette_path = try allocator.dupe(u8, custom_palette_path);
+            } else {
+                return error.MissingCustomPalettePath;
+            }
         }
     }
 
@@ -101,6 +144,8 @@ fn printUsage() void {
         \\  -i, --input <path>      Path to input image (default: images/input.png)
         \\  -o, --output <path>     Path to output image (default: images/output.png)
         \\  -s, --size <number>     Pixel grid size (min_image_size, default: 32)
+        \\  -p, --palette <name>    Use a preset palette (e.g., "retro", "grayscale")
+        \\  -c, --custom-palette <path>  Path to a custom palette file
         \\
     ;
     std.debug.print("{s}", .{usage});
@@ -120,9 +165,10 @@ fn convertToPixelArt(allocator: std.mem.Allocator, image: zigimg.Image, options:
     var downscaled = try downscaleImage(allocator, image, new_width, new_height);
     defer downscaled.deinit();
 
-    // 2. Apply color quantization
-    const palette = try createPalette(allocator, downscaled, options.num_colors);
-    defer allocator.free(palette);
+    // 2. Apply color quantization or use provided palette
+    std.debug.print("Applying color quantization or using provided palette\n", .{});
+    const palette = if (options.palette) |p| p.colors else try createPalette(allocator, downscaled, options.num_colors);
+    defer if (options.palette == null) allocator.free(palette);
 
     // 3. Apply dithering
     var dithered = try applyDithering(allocator, downscaled, palette);

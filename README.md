@@ -39,6 +39,8 @@ Run the program with the following options:
 - `-i, --input <file>`: Specify the input image file path (required)
 - `-o, --output <file>`: Specify the output image file path (required)
 - `-s, --size <number>`: Set the pixel grid size (min_image_size, default: 32)
+- `-p, --palette <name>`: Use a preset palette (e.g., "retro", "grayscale")
+- `-c, --custom-palette <path>`: Path to a custom palette file (e.g., "example_palette.txt")
 
 ### Examples:
 
@@ -50,6 +52,16 @@ Basic usage:
 With custom pixel size:
 ```bash
 ./zig-out/bin/pixzel -i input.png -o output.png -s 64
+```
+
+With color palette:
+```bash
+./zig-out/bin/pixzel -i input.png -o output.png -s 64 -p muted
+```
+
+With custom color palette:
+```bash
+./zig-out/bin/pixzel -i input.png -o output.png -s 64 -c example_palette.txt
 ```
 
 ### Notes:
